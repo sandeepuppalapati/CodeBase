@@ -1,0 +1,205 @@
+#############################################################
+### set the working directory first  #######################
+############################################################
+setwd("C:/CGN/Consulting/SolomonNew") ###CHANGE 1 time ONLY
+
+#############################################################
+############  read in input file              ##############
+#############################################################
+
+FunctionCompute <- function(recordNumber, InputFileName){
+vims = read.csv(InputFileName,header=T)
+str(vims)
+summary(vims)
+head(vims)
+##################################
+## Setting up the constants ##
+#################################
+window <- 7 ## moving average window
+Farea <- 0.009408155 ## front strut area 92294sqmm/10^6*9.81
+#Farea <- 0.0092294 ## 9.81 is rounded off to 10
+Rarea <- 0.008066871  ## rear strut area 79136 sqmm/10^6*9.81
+#Rarea <- 0.0079136 ## 9.81 is rounded off to 10
+Rcorrfactor <- 0.78  ## correction factor for rear due to linkage 78/22
+x1= -4492  ## four corner coordinates
+x2= -4492
+x3= 1372
+x4= 1372
+y1= -1947
+y2 = 1947
+y3 = -955
+y4 = 955
+LFunsprung <- 10
+RFunsprung <- 10
+LRunsprung <- 23.4
+RRunsprung <- 23.4
+
+
+
+###########################################################
+## Do the analysis for one cycle (ie) for one record number
+###########################################################
+#uniquerecord <- unique(vims$Record)
+#uniquerecord
+#write.csv(uniquerecord, file = "temp.csv")
+
+subdat <- subset(vims, Record == recordNumber) ##CHANGE
+head(subdat)
+str(subdat)
+mean(subdat$RRSP)
+
+subdat0 <- subdat[1:5,]  ## for 0 load, compute avg of 5 observations
+
+subdat0
+
+LFSP0 <- mean(subdat0$LFSP)
+RFSP0 <- mean(subdat0$RFSP)
+LRSP0 <- mean(subdat0$LRSP)
+RRSP0 <- mean(subdat0$RRSP)
+
+LFSP0
+RFSP0
+LRSP0
+RRSP0
+
+### moving average function with window defined ahead of time
+
+mav <- function(x,n=5){filter(x,rep(1/n,n), sides=1)}
+subdat$LFSPMA <- mav(subdat$LFSP, window)
+subdat$RFSPMA <- mav(subdat$RFSP, window)
+subdat$LRSPMA <- mav(subdat$LRSP, window)
+subdat$RRSPMA <- mav(subdat$RRSP, window)
+
+### For the first few observations with missing values due to moving avg
+### replace them with 0 load average values
+
+subdat$LFSPMA[is.na(subdat$LFSPMA)] <- LFSP0
+subdat$RFSPMA[is.na(subdat$RFSPMA)] <- RFSP0
+subdat$LRSPMA[is.na(subdat$LRSPMA)] <- LRSP0
+subdat$RRSPMA[is.na(subdat$RRSPMA)] <- RRSP0
+
+
+### force = pressure*area = weight
+### appoximate formula to estimate the 4 weights based on delatap
+### to get payload weight only, subtract 0-load pressure (deltap)
+### for rear struts, part weight is carried by linkage
+## hence correction factor is used
+
+subdat$LFwtdel <- (subdat$LFSPMA- LFSP0)*Farea
+subdat$RFwtdel <- (subdat$RFSPMA- RFSP0)*Farea
+subdat$LRwtdel <- (subdat$LRSPMA- LRSP0)*Rarea/Rcorrfactor
+subdat$RRwtdel <- (subdat$RRSPMA- RRSP0)*Rarea/Rcorrfactor
+
+## To estimate the weight of truck+payload
+## unspring weights are wts on springs with no load
+## use Force=pressure*area + unspring weight for estimation
+## Below are the weights of truck+payload
+
+subdat$LFwt <- (subdat$LFSPMA*Farea) + LFunsprung
+subdat$RFwt <- (subdat$RFSPMA*Farea) + RFunsprung
+subdat$LRwt <- (subdat$LRSPMA*Rarea/Rcorrfactor) + LRunsprung
+subdat$RRwt <- (subdat$RRSPMA*Rarea/Rcorrfactor) + RRunsprung
+
+### For LF, some strut pressures < 0 load pressures
+## this means the weights could be negative, then they are changed to 0
+
+#ifelse(subdat$LFwt<0,0,subdat$LFwt)
+#ifelse(subdat$RFwt<0,0,subdat$RFwt)
+#ifelse(subdat$LRwt<0,0,subdat$LRwt)
+#ifelse(subdat$RRwt<0,0,subdat$RRwt)
+
+#ifelse(subdat$LFwtdel<0,0,subdat$LFwtdel)
+#ifelse(subdat$RFwtdel<0,0,subdat$RFwtdel)
+#ifelse(subdat$LRwtdel<0,0,subdat$LRwtdel)
+#ifelse(subdat$RRwtdel<0,0,subdat$RRwtdel)
+
+## calculate the % truck weights at 4 corners
+
+subdat$EstTotTrk = subdat$LFwt + subdat$RFwt + subdat$LRwt + subdat$RRwt
+subdat$LFTrkper <- subdat$LFwt/subdat$EstTotTrk
+subdat$RFTrkper <- subdat$RFwt/subdat$EstTotTrk
+subdat$LRTrkper <- subdat$LRwt/subdat$EstTotTrk
+subdat$RRTrkper <- subdat$RRwt/subdat$EstTotTrk
+
+subdat$EstPayload = subdat$LFwtdel + subdat$RFwtdel + subdat$LRwtdel + subdat$RRwtdel
+subdat$LFperdel <- subdat$LFwtdel/subdat$EstPayload
+subdat$RFperdel <- subdat$RFwtdel/subdat$EstPayload
+subdat$LRperdel <- subdat$LRwtdel/subdat$EstPayload
+subdat$RRperdel <- subdat$RRwtdel/subdat$EstPayload
+
+
+##  4 weights at 4 corners and (x,y) are defined for 4 corners
+## the following formulas are used to calculate Truck COG for (x,y)
+
+subdat$EstTrkCGX = subdat$LFTrkper*x1 + subdat$RFTrkper*x2 + subdat$LRTrkper*x3 + subdat$RRTrkper*x4
+subdat$EstTrkCGY = subdat$LFTrkper*y1 + subdat$RFTrkper*y2 + subdat$LRTrkper*y3 + subdat$RRTrkper*y4
+
+## if CGX or CGY is missing, then they are replaced by 0
+
+subdat$EstTrkCGX[is.na(subdat$EstTrkCGX)] <- 0
+subdat$EstTrkCGY[is.na(subdat$EstTrkCGY)] <- 0
+
+## calculation of Payload COG
+## using deltap 4 corner wts and hence % wts can be calculated
+## deltap formula to estimate payload weight is very unstable
+## using regression equations from transcale data used to estimate these %
+## truck wt % and payload % are highly correlated
+## make sure that regression equation is NOT extrapolating
+
+ifelse(subdat$LFTrkper<0.10,0.10,subdat$LFTrkper)
+ifelse(subdat$LFTrkper>0.50,0.50,subdat$LFTrkper)
+subdat$LFper <- -0.1995 + 1.778*subdat$LFTrkper
+
+ifelse(subdat$RFTrkper<0.10,0.10,subdat$RFTrkper)
+ifelse(subdat$RFTrkper>0.50,0.50,subdat$RFTrkper)
+subdat$RFper <- -0.1806 + 1.774*subdat$RFTrkper
+
+ifelse(subdat$LRTrkper<0.10,0.10,subdat$LRTrkper)
+ifelse(subdat$LRTrkper>0.50,0.50,subdat$LRTrkper)
+subdat$LRper <- -0.1841 + 1.734*subdat$LRTrkper
+
+ifelse(subdat$RRTrkper<0.10,0.10,subdat$RRTrkper)
+ifelse(subdat$RRTrkper>0.50,0.50,subdat$RRTrkper)
+subdat$RRper <- -0.1853 + 1.738*subdat$RRTrkper
+
+## Since we predicting 4 corners, the total may not add up to 100%
+## Following code is to make sure that they add up to 100%
+
+subdat$totper <- subdat$LFper + subdat$RFper + subdat$LRper + subdat$RRper
+subdat$LFper <- subdat$LFper/subdat$totper
+subdat$RFper <- subdat$RFper/subdat$totper
+subdat$LRper <- subdat$LRper/subdat$totper
+subdat$RRper <- subdat$RRper/subdat$totper
+
+## the following formulas are used to calculate COG for payload
+## First methods is from the regression & predicting the 4 %
+## Using the truck weight %
+## Second method is by using the deltap formula
+
+subdat$PredCGX = subdat$LFper*x1 + subdat$RFper*x2 + subdat$LRper*x3 + subdat$RRper*x4
+subdat$PredCGY = subdat$LFper*y1 + subdat$RFper*y2 + subdat$LRper*y3 + subdat$RRper*y4
+
+subdat$DelCGX = subdat$LFperdel*x1 + subdat$RFperdel*x2 + subdat$LRperdel*x3 + subdat$RRperdel*x4
+subdat$DelCGY = subdat$LFperdel*y1 + subdat$RFperdel*y2 + subdat$LRperdel*y3 + subdat$RRperdel*y4
+
+## if CGX or CGY is missing, then they are replaced by 0
+
+subdat$PredCGX[is.na(subdat$PredCGX)] <- 0
+subdat$PredCGY[is.na(subdat$PredCGY)] <- 0
+
+subdat$DelCGX[is.na(subdat$DelCGX)] <- 0
+subdat$DelCGY[is.na(subdat$DelCGY)] <- 0
+
+## this file is exported to csv file
+
+subdat2 <- subset(subdat, select=
+           c("Record","TruckID","Date","Time","Speed","Fuel",
+             "Payload","LFSP","RFSP","LRSP","RRSP","EstTotTrk",
+             "EstPayload","EstTrkCGX","EstTrkCGY","PredCGX",
+             "PredCGY","DelCGX","DelCGY"))
+
+
+outputFileName <- paste0("subdat",recordNumber,".csv")
+write.csv(subdat2, file = outputFileName) ###CHANGE
+}
+
